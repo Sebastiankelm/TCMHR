@@ -34,9 +34,21 @@ npm run dev
 
 Aplikacja: [http://localhost:3000](http://localhost:3000).
 
+## Połączenie z GitHub i pierwszy push
+
+1. Utwórz **nowe puste repozytorium** na [github.com/new](https://github.com/new) (np. nazwa: `hr`). Nie dodawaj README, .gitignore ani licencji.
+2. W katalogu projektu dodaj remote i wypchnij kod:
+
+```bash
+git remote add origin https://github.com/TWOJ_LOGIN/hr.git
+git push -u origin main
+```
+
+(Zamień `TWOJ_LOGIN` na swoją nazwę użytkownika GitHub i `hr` na nazwę repozytorium, jeśli inna.)
+
 ## Deploy na Vercel
 
-1. Wypchnij repozytorium na GitHub/GitLab/Bitbucket.
+1. Wypchnij repozytorium na GitHub (jak wyżej).
 2. W [Vercel](https://vercel.com) → **Add New Project** → wybierz repozytorium.
 3. W **Environment Variables** dodaj:
    - `NEXT_PUBLIC_SUPABASE_URL`
