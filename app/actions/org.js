@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { mapPositionToDb, mapRaciToDb } from "@/lib/org-data";
+import { mapPositionToDb, mapRaciToDb, mapEmployeeToDb } from "@/lib/org-data";
 
 export async function savePosition(position) {
   const supabase = await createClient();
@@ -85,6 +85,31 @@ export async function deleteRaciRow(id) {
   const supabase = await createClient();
   const { error } = await supabase.from("raci_matrix").delete().eq("id", id);
 
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/");
+  return { ok: true };
+}
+
+export async function saveEmployee(employee) {
+  const supabase = await createClient();
+  const row = mapEmployeeToDb(employee);
+  if (!row.position_id) return { ok: false, error: "Wybierz stanowisko." };
+
+  if (row.id) {
+    const { error } = await supabase.from("employees").update(row).eq("id", row.id);
+    if (error) return { ok: false, error: error.message };
+  } else {
+    const { id, ...insertRow } = row;
+    const { error } = await supabase.from("employees").insert(insertRow);
+    if (error) return { ok: false, error: error.message };
+  }
+  revalidatePath("/");
+  return { ok: true };
+}
+
+export async function deleteEmployee(id) {
+  const supabase = await createClient();
+  const { error } = await supabase.from("employees").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
   revalidatePath("/");
   return { ok: true };

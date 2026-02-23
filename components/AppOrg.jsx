@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   escapeHtml,
   formatMoney,
@@ -11,32 +11,38 @@ import {
   uniqueDepts,
   validateHierarchy,
   buildTreeFromPositions,
+  getSelfAndDescendantIds,
 } from "@/lib/org-utils";
 import { netToGross } from "@/lib/salary-rates";
+import { useRouter } from "next/navigation";
 import {
   savePosition as savePositionAction,
   deletePosition as deletePositionAction,
   saveRaciRows,
   addRaciRow as addRaciRowAction,
   deleteRaciRow as deleteRaciRowAction,
+  saveEmployee as saveEmployeeAction,
+  deleteEmployee as deleteEmployeeAction,
 } from "@/app/actions/org";
 
 const ROLES = ["CEO", "DS", "DP", "DF", "HR", "KP", "KM", "KAM"];
 const RACI_ALLOWED = ["", "R", "A", "C", "I", "A/R", "R/A", "C/I", "I/C"];
 
-function TreeLevel({ node, positions, onNodeClick, onDetail }) {
+function TreeLevel({ node, positions, onDetail, editMode, selectedForEditId, onEditClick }) {
   const pos = getPosById(positions, node.id);
   if (!pos) return null;
 
-  const openDetail = () => {
-    onDetail(pos.id);
+  const isSelected = editMode && selectedForEditId === pos.id;
+  const handleClick = () => {
+    if (editMode && onEditClick) onEditClick(pos.id);
+    else onDetail(pos.id);
   };
 
   return (
     <div className="org-tree-level">
       <div
-        className={`org-org-node org-node-lv${pos.level}`}
-        onClick={openDetail}
+        className={`org-org-node org-node-lv${pos.level} ${isSelected ? "org-node-selected" : ""}`}
+        onClick={handleClick}
       >
         <div className="org-node-card">
           <div className="org-node-level">
@@ -64,8 +70,10 @@ function TreeLevel({ node, positions, onNodeClick, onDetail }) {
                 <TreeLevel
                   node={ch}
                   positions={positions}
-                  onNodeClick={onNodeClick}
                   onDetail={onDetail}
+                  editMode={editMode}
+                  selectedForEditId={selectedForEditId}
+                  onEditClick={onEditClick}
                 />
               </div>
             ))}
@@ -76,9 +84,10 @@ function TreeLevel({ node, positions, onNodeClick, onDetail }) {
   );
 }
 
-export default function AppOrg({ initialPositions = [], initialRaci = [], dataError = null }) {
+export default function AppOrg({ initialPositions = [], initialRaci = [], initialEmployees = [], dataError = null }) {
   const safePositions = Array.isArray(initialPositions) ? initialPositions : [];
   const safeRaci = Array.isArray(initialRaci) ? initialRaci : [];
+  const safeEmployees = Array.isArray(initialEmployees) ? initialEmployees : [];
   const [activeTab, setActiveTab] = useState("hierarchy");
   const [detailId, setDetailId] = useState(null);
   const [formVisible, setFormVisible] = useState(false);
@@ -93,6 +102,13 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
   const [posSearch, setPosSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [clock, setClock] = useState("");
+  const [employeeFormVisible, setEmployeeFormVisible] = useState(false);
+  const [employeeFormMode, setEmployeeFormMode] = useState("add");
+  const [employeeFormPositionId, setEmployeeFormPositionId] = useState(null);
+  const [employeeFormOriginalId, setEmployeeFormOriginalId] = useState(null);
+  const [employeeFormError, setEmployeeFormError] = useState("");
+  const [empSearch, setEmpSearch] = useState("");
+  const [empPositionFilter, setEmpPositionFilter] = useState("");
 
   const hierarchyViewportRef = useRef(null);
   const hierarchyContentRef = useRef(null);
@@ -100,8 +116,24 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
   const [hierarchyPan, setHierarchyPan] = useState({ x: 0, y: 0 });
   const [hierarchyPanning, setHierarchyPanning] = useState(false);
   const hierarchyPanStart = useRef({ x: 0, y: 0, tx: 0, ty: 0 });
+  const [hierarchyEditMode, setHierarchyEditMode] = useState(false);
+  const [hierarchyEditSelectedId, setHierarchyEditSelectedId] = useState(null);
+  const [hierarchyEditMessage, setHierarchyEditMessage] = useState("");
+  const router = useRouter();
 
   const positions = safePositions;
+  const employees = safeEmployees;
+
+  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const activeEmployees = useMemo(
+    () => employees.filter((e) => !e.employmentEnd || e.employmentEnd >= today),
+    [employees, today]
+  );
+
+  const getEmployeeById = useCallback(
+    (id) => employees.find((e) => e.id === id) ?? null,
+    [employees]
+  );
 
   useEffect(() => {
     setClock(new Date().toLocaleString("pl-PL"));
@@ -203,26 +235,91 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
     setHierarchyPanning(false);
   }, []);
 
-  const totalHc = positions.reduce(
-    (acc, p) => acc + headcountToNumber(p.headcount),
-    0
-  );
-  let fundMinNet = 0,
-    fundMaxNet = 0;
-  positions.forEach((p) => {
-    const h = headcountToNumber(p.headcount);
-    const mi = Number(p.min);
-    const ma = Number(p.max);
-    if (Number.isFinite(mi)) fundMinNet += mi * h;
-    if (Number.isFinite(ma)) fundMaxNet += ma * h;
-  });
-  const fundMinGross = netToGross(fundMinNet);
-  const fundMaxGross = netToGross(fundMaxNet);
   const levels =
     Math.max(...positions.map((p) => Number(p.level) || 0), 0) + 1;
 
+  const { totalHc, fundMinNet, fundMaxNet, fundMinGross, fundMaxGross } = useMemo(() => {
+    if (activeEmployees.length > 0) {
+      let minN = 0, maxN = 0;
+      activeEmployees.forEach((emp) => {
+        const pos = getPosById(positions, emp.positionId);
+        if (pos) {
+          const mi = Number(pos.min);
+          const ma = Number(pos.max);
+          if (Number.isFinite(mi)) minN += mi;
+          if (Number.isFinite(ma)) maxN += ma;
+        }
+      });
+      return {
+        totalHc: activeEmployees.length,
+        fundMinNet: minN,
+        fundMaxNet: maxN,
+        fundMinGross: netToGross(minN),
+        fundMaxGross: netToGross(maxN),
+      };
+    }
+    const hc = positions.reduce((acc, p) => acc + headcountToNumber(p.headcount), 0);
+    let minN = 0, maxN = 0;
+    positions.forEach((p) => {
+      const h = headcountToNumber(p.headcount);
+      const mi = Number(p.min);
+      const ma = Number(p.max);
+      if (Number.isFinite(mi)) minN += mi * h;
+      if (Number.isFinite(ma)) maxN += ma * h;
+    });
+    return {
+      totalHc: hc,
+      fundMinNet: minN,
+      fundMaxNet: maxN,
+      fundMinGross: netToGross(minN),
+      fundMaxGross: netToGross(maxN),
+    };
+  }, [activeEmployees, positions]);
+
   const openDetail = (id) => setDetailId(id);
   const closeDetail = () => setDetailId(null);
+
+  const handleHierarchyEditClick = useCallback(
+    async (clickedId) => {
+      if (!hierarchyEditMode) return;
+      const current = hierarchyEditSelectedId;
+      if (current == null) {
+        setHierarchyEditSelectedId(clickedId);
+        setHierarchyEditMessage("");
+        return;
+      }
+      if (clickedId === current) {
+        setHierarchyEditSelectedId(null);
+        setHierarchyEditMessage("");
+        return;
+      }
+      const forbidden = getSelfAndDescendantIds(positions, current);
+      if (forbidden.has(clickedId)) {
+        setHierarchyEditMessage("Nie można ustawić przełożonego na podwładnego (unikaj cyklu).");
+        return;
+      }
+      const pos = getPosById(positions, current);
+      if (!pos) return;
+      setSaving(true);
+      setHierarchyEditMessage("");
+      const result = await savePositionAction({ ...pos, parentId: clickedId });
+      setSaving(false);
+      if (result?.ok) {
+        setHierarchyEditSelectedId(null);
+        setHierarchyEditMessage("Zaktualizowano przełożonego.");
+        router.refresh();
+      } else {
+        setHierarchyEditMessage(result?.error || "Błąd zapisu.");
+      }
+    },
+    [hierarchyEditMode, hierarchyEditSelectedId, positions, router]
+  );
+
+  const toggleHierarchyEditMode = () => {
+    setHierarchyEditMode((v) => !v);
+    setHierarchyEditSelectedId(null);
+    setHierarchyEditMessage("");
+  };
 
   const detailPos = detailId ? getPos(detailId) : null;
 
@@ -244,6 +341,80 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
   const cancelForm = () => {
     setFormVisible(false);
     setFormError("");
+  };
+
+  const openAddEmployee = (positionId = null) => {
+    setEmployeeFormMode("add");
+    setEmployeeFormPositionId(positionId);
+    setEmployeeFormOriginalId(null);
+    setEmployeeFormError("");
+    setEmployeeFormVisible(true);
+  };
+
+  const openEditEmployee = (empId) => {
+    setEmployeeFormMode("edit");
+    setEmployeeFormOriginalId(empId);
+    setEmployeeFormPositionId(null);
+    setEmployeeFormError("");
+    setEmployeeFormVisible(true);
+  };
+
+  const cancelEmployeeForm = () => {
+    setEmployeeFormVisible(false);
+    setEmployeeFormError("");
+  };
+
+  const saveEmployee = async (e) => {
+    e.preventDefault();
+    setEmployeeFormError("");
+    const form = e.target;
+    const positionId = (form.querySelector("#emp-position")?.value ?? "").trim() || null;
+    const firstName = (form.querySelector("#emp-first")?.value ?? "").trim();
+    const lastName = (form.querySelector("#emp-last")?.value ?? "").trim();
+    const email = (form.querySelector("#emp-email")?.value ?? "").trim();
+    const phone = (form.querySelector("#emp-phone")?.value ?? "").trim();
+    const description = (form.querySelector("#emp-description")?.value ?? "").trim();
+    const notes = (form.querySelector("#emp-notes")?.value ?? "").trim();
+    const employmentStart = (form.querySelector("#emp-start")?.value ?? "") || null;
+    const employmentEnd = (form.querySelector("#emp-end")?.value ?? "") || null;
+    if (!lastName && !firstName) {
+      setEmployeeFormError("Imię lub nazwisko jest wymagane.");
+      return;
+    }
+    if (!positionId) {
+      setEmployeeFormError("Wybierz stanowisko.");
+      return;
+    }
+    const emp = employeeFormOriginalId ? getEmployeeById(employeeFormOriginalId) : null;
+    const payload = {
+      id: emp?.id ?? null,
+      positionId,
+      firstName,
+      lastName,
+      email,
+      phone,
+      description,
+      notes,
+      employmentStart: employmentStart || null,
+      employmentEnd: employmentEnd || null,
+    };
+    setSaving(true);
+    const result = await saveEmployeeAction(payload);
+    setSaving(false);
+    if (result?.ok) {
+      cancelEmployeeForm();
+      router.refresh();
+    } else {
+      setEmployeeFormError(result?.error || "Błąd zapisu.");
+    }
+  };
+
+  const deleteEmployee = async (id) => {
+    if (!confirm("Usunąć tego pracownika z listy?")) return;
+    setSaving(true);
+    const result = await deleteEmployeeAction(id);
+    setSaving(false);
+    if (result?.ok) router.refresh();
   };
 
   const savePosition = async (e) => {
@@ -465,6 +636,7 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
           { key: "salaries", label: "Siatka wynagrodzeń" },
           { key: "raci", label: "Matryca RACI" },
           { key: "positions", label: "Stanowiska" },
+          { key: "employees", label: "Pracownicy" },
         ].map(({ key, label }) => (
           <button
             key={key}
@@ -487,7 +659,7 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
             <div className="org-stat-card">
               <div className="org-stat-label">Pracownicy</div>
               <div className="org-stat-value">{Math.round(totalHc)}</div>
-              <div className="org-stat-sub">suma etatów</div>
+              <div className="org-stat-sub">{activeEmployees.length > 0 ? "zatrudnieni" : "suma etatów"}</div>
             </div>
             <div className="org-stat-card">
               <div className="org-stat-label">Fundusz płac (netto)</div>
@@ -496,7 +668,7 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
                   ? `${Math.round(fundMinNet / 1000)}k–${Math.round(fundMaxNet / 1000)}k`
                   : "—"}
               </div>
-              <div className="org-stat-sub">min–max (szacunek)</div>
+              <div className="org-stat-sub">{activeEmployees.length > 0 ? "na podstawie zatrudnionych" : "min–max (szacunek)"}</div>
             </div>
             <div className="org-stat-card">
               <div className="org-stat-label">Fundusz płac (brutto)</div>
@@ -505,7 +677,7 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
                   ? `${Math.round(fundMinGross / 1000)}k–${Math.round(fundMaxGross / 1000)}k`
                   : "—"}
               </div>
-              <div className="org-stat-sub">z netto (stawki kosztów pracodawcy)</div>
+              <div className="org-stat-sub">{activeEmployees.length > 0 ? "na podstawie zatrudnionych" : "z netto (stawki kosztów pracodawcy)"}</div>
             </div>
             <div className="org-stat-card">
               <div className="org-stat-label">Stanowiska</div>
@@ -544,10 +716,39 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
               <div className="org-legend-dot" style={{ background: "var(--lv5)" }} />
               Pracownicy wykonawczy
             </div>
-            <div style={{ marginLeft: "auto", fontSize: 12, color: "var(--ink3)" }}>
-              Kliknij węzeł → szczegóły
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className={`org-btn ${hierarchyEditMode ? "org-btn-primary" : "org-btn-secondary"}`}
+                style={{ padding: "6px 12px", fontSize: 11 }}
+                onClick={toggleHierarchyEditMode}
+              >
+                {hierarchyEditMode ? "Wyłącz edycję" : "Tryb edycji (przełożony)"}
+              </button>
+              {hierarchyEditMode && (
+                <span style={{ fontSize: 12, color: "var(--ink2)" }}>
+                  {hierarchyEditSelectedId
+                    ? `Wybierz nowego przełożonego dla „${getPosById(positions, hierarchyEditSelectedId)?.title ?? hierarchyEditSelectedId}”`
+                    : "Kliknij stanowisko, potem kliknij nowego przełożonego"}
+                </span>
+              )}
+              {!hierarchyEditMode && (
+                <span style={{ fontSize: 12, color: "var(--ink3)" }}>Kliknij węzeł → szczegóły</span>
+              )}
             </div>
           </div>
+
+          {hierarchyEditMessage && (
+            <div
+              className="org-rule-block"
+              style={{
+                marginBottom: 12,
+                borderLeftColor: hierarchyEditMessage.startsWith("Nie można") || hierarchyEditMessage.startsWith("Błąd") ? "var(--red)" : "var(--green)",
+              }}
+            >
+              {escapeHtml(hierarchyEditMessage)}
+            </div>
+          )}
 
           {problems.length > 0 && (
             <div
@@ -618,6 +819,9 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
                     node={treeRoot}
                     positions={positions}
                     onDetail={openDetail}
+                    editMode={hierarchyEditMode}
+                    selectedForEditId={hierarchyEditSelectedId}
+                    onEditClick={handleHierarchyEditClick}
                   />
                 )}
               </div>
@@ -900,6 +1104,117 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
             </table>
           </div>
         </div>
+
+        {/* Tab: Pracownicy */}
+        <div
+          id="tab-employees"
+          className={`org-tab-panel ${activeTab === "employees" ? "active" : ""}`}
+        >
+          <div className="org-section-heading">
+            Lista pracowników{" "}
+            <span>Zatrudnieni, przypisani do stanowisk</span>
+          </div>
+          <div className="org-search-bar">
+            <input
+              type="text"
+              className="org-search-input"
+              placeholder="Szukaj po nazwisku, imieniu, e-mail..."
+              value={empSearch}
+              onChange={(e) => setEmpSearch(e.target.value)}
+            />
+            <select
+              className="org-edit-input"
+              style={{ minWidth: 200 }}
+              value={empPositionFilter}
+              onChange={(e) => setEmpPositionFilter(e.target.value)}
+            >
+              <option value="">Wszystkie stanowiska</option>
+              {positions
+                .sort((a, b) => (a.title || "").localeCompare(b.title || "", "pl"))
+                .map((p) => (
+                  <option key={p.id} value={p.id}>{p.title}</option>
+                ))}
+            </select>
+            <button
+              type="button"
+              className="org-btn org-btn-gold"
+              style={{ padding: "8px 14px", fontSize: 11 }}
+              onClick={() => openAddEmployee()}
+            >
+              + Dodaj pracownika
+            </button>
+          </div>
+          <div className="org-salary-table-wrap">
+            <table className="org-salary-table">
+              <thead>
+                <tr>
+                  <th>Nazwa</th>
+                  <th>Stanowisko</th>
+                  <th>Dział</th>
+                  <th>Email</th>
+                  <th>Telefon</th>
+                  <th>Zatrudnienie</th>
+                  <th>Akcje</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(() => {
+                const filteredEmployees = (empSearch.trim()
+                  ? employees.filter(
+                      (e) =>
+                        `${e.firstName} ${e.lastName}`.toLowerCase().includes(empSearch.toLowerCase()) ||
+                        (e.email || "").toLowerCase().includes(empSearch.toLowerCase())
+                    )
+                  : employees
+                ).filter((e) => !empPositionFilter || e.positionId === empPositionFilter);
+                if (filteredEmployees.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan={7} style={{ textAlign: "center", color: "var(--ink3)", padding: 24 }}>
+                        Brak pracowników.{employees.length === 0 ? " Dodaj pierwszego w zakładce lub ze szczegółów stanowiska." : ""}
+                      </td>
+                    </tr>
+                  );
+                }
+                return filteredEmployees.map((emp) => {
+                    const pos = getPosById(positions, emp.positionId);
+                    const name = [emp.firstName, emp.lastName].filter(Boolean).join(" ") || "—";
+                    const start = emp.employmentStart ? new Date(emp.employmentStart).toLocaleDateString("pl-PL") : "—";
+                    const end = emp.employmentEnd ? new Date(emp.employmentEnd).toLocaleDateString("pl-PL") : "—";
+                    return (
+                      <tr key={emp.id}>
+                        <td><strong>{escapeHtml(name)}</strong></td>
+                        <td>{escapeHtml(pos?.title ?? emp.positionId ?? "—")}</td>
+                        <td>{escapeHtml(pos?.dept ?? "—")}</td>
+                        <td>{escapeHtml(emp.email || "—")}</td>
+                        <td>{escapeHtml(emp.phone || "—")}</td>
+                        <td style={{ fontSize: 12 }}>{start}{emp.employmentEnd ? ` – ${end}` : ""}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="org-btn org-btn-secondary"
+                            style={{ padding: "6px 10px", fontSize: 10, marginRight: 6 }}
+                            onClick={() => openEditEmployee(emp.id)}
+                          >
+                            Edytuj
+                          </button>
+                          <button
+                            type="button"
+                            className="org-btn org-btn-secondary"
+                            style={{ padding: "6px 10px", fontSize: 10, borderColor: "var(--red)", color: "var(--red)" }}
+                            onClick={() => deleteEmployee(emp.id)}
+                          >
+                            Usuń
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  });
+                })()}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </main>
 
       {/* Formularz stanowiska — popup */}
@@ -1013,6 +1328,112 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
         )}
       </div>
 
+      {/* Formularz pracownika — popup */}
+      <div
+        className={`org-form-overlay ${employeeFormVisible ? "open" : ""}`}
+        onClick={(e) => e.target === e.currentTarget && cancelEmployeeForm()}
+      >
+        {employeeFormVisible && (
+          <div
+            className="org-form-panel"
+            key={`emp-form-${employeeFormMode}-${employeeFormOriginalId ?? "new"}-${employeeFormPositionId ?? ""}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="org-form-panel-header">
+              <h2 className="org-form-panel-title">
+                {employeeFormMode === "add" ? "Nowy pracownik" : "Edycja pracownika"}
+              </h2>
+              <button type="button" className="org-detail-close" onClick={cancelEmployeeForm}>×</button>
+            </div>
+            <div className="org-form-panel-body">
+              <form onSubmit={saveEmployee}>
+                <div className="org-edit-grid">
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">Stanowisko</label>
+                    <select
+                      className="org-edit-input"
+                      id="emp-position"
+                      defaultValue={
+                        employeeFormMode === "edit" && employeeFormOriginalId
+                          ? getEmployeeById(employeeFormOriginalId)?.positionId ?? ""
+                          : employeeFormPositionId ?? ""
+                      }
+                    >
+                      <option value="">— wybierz —</option>
+                      {positions
+                        .sort((a, b) => (a.title || "").localeCompare(b.title || "", "pl"))
+                        .map((p) => (
+                          <option key={p.id} value={p.id}>{p.title} · {p.dept}</option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">Imię</label>
+                    <input type="text" className="org-edit-input" id="emp-first" placeholder="Jan"
+                      defaultValue={employeeFormOriginalId ? getEmployeeById(employeeFormOriginalId)?.firstName ?? "" : ""} />
+                  </div>
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">Nazwisko</label>
+                    <input type="text" className="org-edit-input" id="emp-last" placeholder="Kowalski"
+                      defaultValue={employeeFormOriginalId ? getEmployeeById(employeeFormOriginalId)?.lastName ?? "" : ""} />
+                  </div>
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">Email</label>
+                    <input type="email" className="org-edit-input" id="emp-email" placeholder="jan@firma.pl"
+                      defaultValue={employeeFormOriginalId ? getEmployeeById(employeeFormOriginalId)?.email ?? "" : ""} />
+                  </div>
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">Telefon</label>
+                    <input type="text" className="org-edit-input" id="emp-phone" placeholder="+48 123 456 789"
+                      defaultValue={employeeFormOriginalId ? getEmployeeById(employeeFormOriginalId)?.phone ?? "" : ""} />
+                  </div>
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">Zatrudnienie od</label>
+                    <input type="date" className="org-edit-input" id="emp-start"
+                      defaultValue={employeeFormOriginalId ? getEmployeeById(employeeFormOriginalId)?.employmentStart ?? "" : today} />
+                  </div>
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">Zatrudnienie do (puste = nadal)</label>
+                    <input type="date" className="org-edit-input" id="emp-end"
+                      defaultValue={employeeFormOriginalId ? getEmployeeById(employeeFormOriginalId)?.employmentEnd ?? "" : ""} />
+                  </div>
+                  <div className="org-edit-field full">
+                    <label className="org-edit-label">Opis / stanowisko</label>
+                    <textarea className="org-edit-input" id="emp-description" rows={2} placeholder="Opcjonalnie"
+                      defaultValue={employeeFormOriginalId ? getEmployeeById(employeeFormOriginalId)?.description ?? "" : ""} />
+                  </div>
+                  <div className="org-edit-field full">
+                    <label className="org-edit-label">Notatki</label>
+                    <textarea className="org-edit-input" id="emp-notes" rows={2} placeholder="Opcjonalnie"
+                      defaultValue={employeeFormOriginalId ? getEmployeeById(employeeFormOriginalId)?.notes ?? "" : ""} />
+                  </div>
+                </div>
+                <div className="org-btn-row">
+                  <button type="submit" className="org-btn org-btn-primary" disabled={saving}>Zapisz</button>
+                  <button type="button" className="org-btn org-btn-secondary" onClick={cancelEmployeeForm}>Anuluj</button>
+                  {employeeFormMode === "edit" && employeeFormOriginalId && (
+                    <button
+                      type="button"
+                      className="org-btn org-btn-secondary"
+                      style={{ borderColor: "var(--red)", color: "var(--red)" }}
+                      onClick={() => { if (confirm("Usunąć pracownika?")) deleteEmployee(employeeFormOriginalId).then(() => { cancelEmployeeForm(); router.refresh(); }); }}
+                      disabled={saving}
+                    >
+                      Usuń
+                    </button>
+                  )}
+                </div>
+              </form>
+              {employeeFormError && (
+                <div className="org-rule-block" style={{ borderLeftColor: "var(--red)", marginTop: 12 }}>
+                  <strong>Błąd:</strong> {escapeHtml(employeeFormError)}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Szczegóły stanowiska — popup */}
       <div
         className={`org-detail-overlay ${detailId ? "open" : ""}`}
@@ -1080,6 +1501,43 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
                     </div>
                   </div>
                 </div>
+              </div>
+              <div className="org-detail-section">
+                <div className="org-detail-section-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  Pracownicy na stanowisku
+                  <button
+                    type="button"
+                    className="org-btn org-btn-gold"
+                    style={{ padding: "4px 10px", fontSize: 10 }}
+                    onClick={() => { openAddEmployee(detailPos.id); }}
+                  >
+                    + Dodaj pracownika
+                  </button>
+                </div>
+                {employees.filter((e) => e.positionId === detailPos.id).length === 0 ? (
+                  <div style={{ color: "var(--ink3)", fontSize: 13 }}>Brak przypisanych pracowników.</div>
+                ) : (
+                  <ul className="org-duties-list" style={{ marginTop: 8 }}>
+                    {employees
+                      .filter((e) => e.positionId === detailPos.id)
+                      .map((emp) => {
+                        const name = [emp.firstName, emp.lastName].filter(Boolean).join(" ") || "—";
+                        return (
+                          <li key={emp.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                            <span>{escapeHtml(name)}{emp.email ? ` · ${escapeHtml(emp.email)}` : ""}</span>
+                            <button
+                              type="button"
+                              className="org-btn org-btn-secondary"
+                              style={{ padding: "4px 8px", fontSize: 10 }}
+                              onClick={() => { openEditEmployee(emp.id); closeDetail(); }}
+                            >
+                              Edytuj
+                            </button>
+                          </li>
+                        );
+                      })}
+                  </ul>
+                )}
               </div>
               <div className="org-detail-section">
                 <div className="org-detail-section-title">Zakres obowiązków</div>

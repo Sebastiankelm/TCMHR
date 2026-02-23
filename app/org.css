@@ -475,6 +475,13 @@
   box-shadow: 0 4px 16px rgba(0,0,0,0.12);
 }
 
+.org-node-selected .org-node-card {
+  border-color: var(--gold);
+  border-width: 2px;
+  box-shadow: 0 0 0 2px rgba(212, 160, 23, 0.4);
+  background: rgba(212, 160, 23, 0.08);
+}
+
 .org-node-lv0 .org-node-card { border-top-color: var(--lv0); }
 .org-node-lv1 .org-node-card { border-top-color: var(--lv1); }
 .org-node-lv2 .org-node-card { border-top-color: var(--lv2); }
