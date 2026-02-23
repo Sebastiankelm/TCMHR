@@ -36,15 +36,25 @@ Aplikacja: [http://localhost:3000](http://localhost:3000).
 
 ## Połączenie z GitHub i pierwszy push
 
-1. Utwórz **nowe puste repozytorium** na [github.com/new](https://github.com/new) (np. nazwa: `hr`). Nie dodawaj README, .gitignore ani licencji.
-2. W katalogu projektu dodaj remote i wypchnij kod:
+**Opcja A – GitHub CLI (zalecane)**  
+Jeśli masz zainstalowane [GitHub CLI](https://cli.github.com/) (`gh`):
+
+1. Zaloguj się (jednorazowo): `gh auth login`
+2. Utwórz repozytorium i wypchnij kod:
 
 ```bash
-git remote add origin https://github.com/TWOJ_LOGIN/hr.git
-git push -u origin main
+gh repo create hr --public --source=. --remote=origin --push
 ```
 
-(Zamień `TWOJ_LOGIN` na swoją nazwę użytkownika GitHub i `hr` na nazwę repozytorium, jeśli inna.)
+(Remote `origin` jest już ustawiony na `https://github.com/Sebastiankelm/hr.git`.)
+
+**Opcja B – ręcznie w przeglądarce**  
+1. Utwórz **nowe puste repozytorium** na [github.com/new](https://github.com/new) (np. nazwa: `hr`). Nie dodawaj README, .gitignore ani licencji.  
+2. W katalogu projektu wypchnij kod:
+
+```bash
+git push -u origin main
+```
 
 ## Deploy na Vercel
 
