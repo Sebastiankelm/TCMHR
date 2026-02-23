@@ -127,32 +127,27 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
   const fitHierarchyView = useCallback(() => {
     const vp = hierarchyViewportRef.current;
     const content = hierarchyContentRef.current;
-    if (!vp || !content || !treeRoot) return;
-    const vw = vp.clientWidth;
-    const vh = vp.clientHeight;
+    if (!vp || !content) return;
     const cw = content.offsetWidth;
     const ch = content.offsetHeight;
     if (cw <= 0 || ch <= 0) return;
+    const vw = vp.clientWidth;
+    const vh = vp.clientHeight;
     const scale = Math.min(vw / cw, vh / ch, 1) * 0.92;
     const tx = (vw - cw * scale) / 2;
     const ty = (vh - ch * scale) / 2;
     setHierarchyZoom(scale);
     setHierarchyPan({ x: tx, y: ty });
-  }, [treeRoot]);
+  }, []);
+
+  const fitHierarchyViewRef = useRef(fitHierarchyView);
+  fitHierarchyViewRef.current = fitHierarchyView;
 
   useEffect(() => {
-    if (activeTab !== "hierarchy" || !treeRoot) return;
-    const t = setTimeout(fitHierarchyView, 100);
+    if (activeTab !== "hierarchy") return;
+    const t = setTimeout(() => fitHierarchyViewRef.current(), 150);
     return () => clearTimeout(t);
-  }, [activeTab, treeRoot, fitHierarchyView]);
-
-  useEffect(() => {
-    const vp = hierarchyViewportRef.current;
-    if (!vp) return;
-    const ro = new ResizeObserver(() => fitHierarchyView());
-    ro.observe(vp);
-    return () => ro.disconnect();
-  }, [fitHierarchyView]);
+  }, [activeTab]);
 
   const hierarchyZoomPanRef = useRef({ zoom: hierarchyZoom, pan: hierarchyPan });
   hierarchyZoomPanRef.current = { zoom: hierarchyZoom, pan: hierarchyPan };
