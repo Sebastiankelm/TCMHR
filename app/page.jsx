@@ -1,10 +1,25 @@
-export default function HomePage() {
+import { createClient } from "@/lib/supabase/server";
+import { mapPositionFromDb, mapRaciFromDb } from "@/lib/org-data";
+import AppOrg from "@/components/AppOrg";
+import "./org.css";
+
+export const dynamic = "force-dynamic";
+
+export default async function HomePage() {
+  const supabase = await createClient();
+
+  const [positionsRes, raciRes] = await Promise.all([
+    supabase.from("positions").select("*").order("level").order("dept"),
+    supabase.from("raci_matrix").select("*").order("sort_order"),
+  ]);
+
+  const initialPositions = (positionsRes.data ?? []).map(mapPositionFromDb);
+  const initialRaci = (raciRes.data ?? []).map(mapRaciFromDb);
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-8">
-      <h1 className="text-4xl font-bold">HR</h1>
-      <p className="mt-4 text-lg opacity-80">
-        Baza projektu: Next.js + Vercel + Supabase
-      </p>
-    </main>
+    <AppOrg
+      initialPositions={initialPositions}
+      initialRaci={initialRaci}
+    />
   );
 }

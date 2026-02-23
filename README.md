@@ -46,7 +46,7 @@ Jeśli masz zainstalowane [GitHub CLI](https://cli.github.com/) (`gh`):
 gh repo create hr --public --source=. --remote=origin --push
 ```
 
-(Remote `origin` jest już ustawiony na `https://github.com/Sebastiankelm/hr.git`.)
+(Remote `origin` → [Sebastiankelm/TCMHR](https://github.com/Sebastiankelm/TCMHR).)
 
 **Opcja B – ręcznie w przeglądarce**  
 1. Utwórz **nowe puste repozytorium** na [github.com/new](https://github.com/new) (np. nazwa: `hr`). Nie dodawaj README, .gitignore ani licencji.  
@@ -56,20 +56,47 @@ gh repo create hr --public --source=. --remote=origin --push
 git push -u origin main
 ```
 
-## Deploy na Vercel
+## Połączenie z Supabase i Vercel
 
-1. Wypchnij repozytorium na GitHub (jak wyżej).
-2. W [Vercel](https://vercel.com) → **Add New Project** → wybierz repozytorium.
-3. W **Environment Variables** dodaj:
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-4. Kliknij **Deploy**. Vercel wykryje Next.js i zbuduje projekt.
+### Supabase (ten projekt)
+
+- **Dashboard:** [Supabase – projekt obxoowqvqqhojdhqyoac](https://supabase.com/dashboard/project/obxoowqvqqhojdhqyoac)
+- **Lokalnie:** skopiuj `.env.local.example` → `.env.local` i wklej **anon key** z Supabase:  
+  **Project Settings** → **API** → **Project API keys** → **anon public**.
+
+### Vercel (ten projekt)
+
+- **Projekt:** [tcmhr na Vercel](https://vercel.com/sebastians-projects-8fc17035/tcmhr)
+1. **Connect Git** (jeśli jeszcze nie): **Settings** → **Git** → podłącz repozytorium [TCMHR](https://github.com/Sebastiankelm/TCMHR).
+2. **Zmienne środowiskowe:** **Settings** → **Environment Variables** → dodaj:
+   - `NEXT_PUBLIC_SUPABASE_URL` = `https://obxoowqvqqhojdhqyoac.supabase.co`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` = *(anon key z Supabase → Project Settings → API)*
+3. **Redeploy:** **Deployments** → ostatni deployment → **⋯** → **Redeploy**, żeby build miał dostęp do zmiennych.
+
+## Deploy na Vercel (ogólnie)
+
+1. Repozytorium na GitHub: [Sebastiankelm/TCMHR](https://github.com/Sebastiankelm/TCMHR).
+2. W [Vercel](https://vercel.com) → **Add New Project** (lub istniejący **tcmhr**) → wybierz to repozytorium.
+3. W **Environment Variables** ustaw `NEXT_PUBLIC_SUPABASE_URL` i `NEXT_PUBLIC_SUPABASE_ANON_KEY` jak wyżej.
+4. **Deploy**. Vercel wykryje Next.js i zbuduje projekt.
+
+## Migracje bazy (Supabase)
+
+Aplikacja używa tabel: **positions** (stanowiska) i **raci_matrix** (matryca RACI).
+
+1. W **Supabase** → [SQL Editor](https://supabase.com/dashboard/project/obxoowqvqqhojdhqyoac/sql/new).
+2. Uruchom migracje w kolejności:
+   - `supabase/migrations/20250223000001_initial.sql` – tworzy tabele i RLS
+   - `supabase/migrations/20250223000002_seed.sql` – wstawia dane startowe (stanowiska + RACI)
+
+Albo skopiuj zawartość obu plików do jednego zapytania i wykonaj. Po migracji strona będzie korzystać z danych z Supabase.
 
 ## Struktura
 
-- `app/` – App Router (layout, strony, API routes)
+- `app/` – App Router (layout, strony, akcje)
 - `components/` – komponenty React (PascalCase)
 - `lib/supabase/` – klient Supabase (przeglądarka, serwer, middleware)
+- `supabase/migrations/` – migracje SQL (positions, raci_matrix)
 
 ### Supabase
 
