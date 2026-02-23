@@ -158,6 +158,7 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
   hierarchyZoomPanRef.current = { zoom: hierarchyZoom, pan: hierarchyPan };
 
   const onHierarchyWheel = useCallback((e) => {
+    if (!e.ctrlKey && !e.metaKey) return;
     const vp = hierarchyViewportRef.current;
     if (!vp || !vp.contains(e.target)) return;
     e.preventDefault();
@@ -627,7 +628,7 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
               </div>
             </div>
             <p className="org-tree-hint">
-              Scroll: zoom · Przeciągnij: przesuń widok
+              Ctrl + scroll: zoom · Przeciągnij: przesuń widok
             </p>
           </div>
         </div>
