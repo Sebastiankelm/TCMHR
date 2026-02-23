@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   escapeHtml,
   formatMoney,
@@ -94,6 +94,13 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
   const [saving, setSaving] = useState(false);
   const [clock, setClock] = useState("");
 
+  const hierarchyViewportRef = useRef(null);
+  const hierarchyContentRef = useRef(null);
+  const [hierarchyZoom, setHierarchyZoom] = useState(0.5);
+  const [hierarchyPan, setHierarchyPan] = useState({ x: 0, y: 0 });
+  const [hierarchyPanning, setHierarchyPanning] = useState(false);
+  const hierarchyPanStart = useRef({ x: 0, y: 0, tx: 0, ty: 0 });
+
   const positions = safePositions;
 
   useEffect(() => {
@@ -116,6 +123,88 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
   const treeRoot = positions.length
     ? buildTreeFromPositions(positions, getPos)
     : null;
+
+  const fitHierarchyView = useCallback(() => {
+    const vp = hierarchyViewportRef.current;
+    const content = hierarchyContentRef.current;
+    if (!vp || !content || !treeRoot) return;
+    const vw = vp.clientWidth;
+    const vh = vp.clientHeight;
+    const cw = content.offsetWidth;
+    const ch = content.offsetHeight;
+    if (cw <= 0 || ch <= 0) return;
+    const scale = Math.min(vw / cw, vh / ch, 1) * 0.92;
+    const tx = (vw - cw * scale) / 2;
+    const ty = (vh - ch * scale) / 2;
+    setHierarchyZoom(scale);
+    setHierarchyPan({ x: tx, y: ty });
+  }, [treeRoot]);
+
+  useEffect(() => {
+    if (activeTab !== "hierarchy" || !treeRoot) return;
+    const t = setTimeout(fitHierarchyView, 100);
+    return () => clearTimeout(t);
+  }, [activeTab, treeRoot, fitHierarchyView]);
+
+  useEffect(() => {
+    const vp = hierarchyViewportRef.current;
+    if (!vp) return;
+    const ro = new ResizeObserver(() => fitHierarchyView());
+    ro.observe(vp);
+    return () => ro.disconnect();
+  }, [fitHierarchyView]);
+
+  const hierarchyZoomPanRef = useRef({ zoom: hierarchyZoom, pan: hierarchyPan });
+  hierarchyZoomPanRef.current = { zoom: hierarchyZoom, pan: hierarchyPan };
+
+  const onHierarchyWheel = useCallback((e) => {
+    e.preventDefault();
+    const vp = hierarchyViewportRef.current;
+    if (!vp) return;
+    const delta = -Math.sign(e.deltaY) * 0.12;
+    const vw = vp.clientWidth;
+    const vh = vp.clientHeight;
+    const { zoom: s, pan: p } = hierarchyZoomPanRef.current;
+    const next = Math.min(2, Math.max(0.15, s * (1 + delta)));
+    const cx = vw / 2;
+    const cy = vh / 2;
+    setHierarchyZoom(next);
+    setHierarchyPan({
+      x: cx - (cx - p.x) * (next / s),
+      y: cy - (cy - p.y) * (next / s),
+    });
+  }, []);
+
+  useEffect(() => {
+    const vp = hierarchyViewportRef.current;
+    if (!vp || activeTab !== "hierarchy") return;
+    vp.addEventListener("wheel", onHierarchyWheel, { passive: false });
+    return () => vp.removeEventListener("wheel", onHierarchyWheel);
+  }, [onHierarchyWheel, activeTab]);
+
+  const onHierarchyPanStart = useCallback((e) => {
+    if (e.target.closest(".org-node-card") || e.target.closest("button")) return;
+    e.preventDefault();
+    hierarchyPanStart.current = {
+      x: e.clientX,
+      y: e.clientY,
+      tx: hierarchyPan.x,
+      ty: hierarchyPan.y,
+    };
+    setHierarchyPanning(true);
+  }, [hierarchyPan]);
+
+  const onHierarchyPanMove = useCallback((e) => {
+    if (!hierarchyPanning) return;
+    setHierarchyPan({
+      x: hierarchyPanStart.current.tx + (e.clientX - hierarchyPanStart.current.x),
+      y: hierarchyPanStart.current.ty + (e.clientY - hierarchyPanStart.current.y),
+    });
+  }, [hierarchyPanning]);
+
+  const onHierarchyPanEnd = useCallback(() => {
+    setHierarchyPanning(false);
+  }, []);
 
   const totalHc = positions.reduce(
     (acc, p) => acc + headcountToNumber(p.headcount),
@@ -401,7 +490,7 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
             <div className="org-stat-card">
               <div className="org-stat-label">Pracownicy</div>
               <div className="org-stat-value">{Math.round(totalHc)}</div>
-              <div className="org-stat-sub">suma headcount</div>
+              <div className="org-stat-sub">suma etatów</div>
             </div>
             <div className="org-stat-card">
               <div className="org-stat-label">Fundusz płac (netto)</div>
@@ -476,16 +565,69 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
             </div>
           )}
 
-          <div className="org-tree-wrap org-scrollbar">
-            <div className="org-tree-root">
-              {treeRoot && (
-                <TreeLevel
-                  node={treeRoot}
-                  positions={positions}
-                  onDetail={openDetail}
-                />
-              )}
+          <div
+            className="org-tree-viewport"
+            ref={hierarchyViewportRef}
+            onMouseDown={onHierarchyPanStart}
+            onMouseMove={onHierarchyPanMove}
+            onMouseUp={onHierarchyPanEnd}
+            onMouseLeave={onHierarchyPanEnd}
+            style={{ cursor: hierarchyPanning ? "grabbing" : "grab" }}
+          >
+            <div
+              className="org-tree-zoom-controls"
+              role="toolbar"
+              aria-label="Zoom hierarchii"
+            >
+              <button
+                type="button"
+                className="org-zoom-btn"
+                onClick={() => setHierarchyZoom((s) => Math.min(2, s + 0.15))}
+                title="Przybliż"
+              >
+                +
+              </button>
+              <button
+                type="button"
+                className="org-zoom-btn"
+                onClick={() => setHierarchyZoom((s) => Math.max(0.15, s - 0.15))}
+                title="Oddal"
+              >
+                −
+              </button>
+              <button
+                type="button"
+                className="org-zoom-btn org-zoom-fit"
+                onClick={fitHierarchyView}
+                title="Dopasuj do widoku"
+              >
+                Dopasuj
+              </button>
+              <span className="org-zoom-label" aria-live="polite">
+                {Math.round(hierarchyZoom * 100)}%
+              </span>
             </div>
+            <div
+              className="org-tree-zoom-pan"
+              ref={hierarchyContentRef}
+              style={{
+                transform: `translate(${hierarchyPan.x}px, ${hierarchyPan.y}px) scale(${hierarchyZoom})`,
+                transformOrigin: "0 0",
+              }}
+            >
+              <div className="org-tree-root">
+                {treeRoot && (
+                  <TreeLevel
+                    node={treeRoot}
+                    positions={positions}
+                    onDetail={openDetail}
+                  />
+                )}
+              </div>
+            </div>
+            <p className="org-tree-hint">
+              Scroll: zoom · Przeciągnij: przesuń widok
+            </p>
           </div>
         </div>
 
@@ -531,7 +673,7 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
                   <th>Max netto</th>
                   <th>Min brutto</th>
                   <th>Max brutto</th>
-                  <th>Headcount</th>
+                  <th>Liczba etatów</th>
                 </tr>
               </thead>
               <tbody>
@@ -686,245 +828,6 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
             <span>Dodawanie, edycja, hierarchia</span>
           </div>
 
-          {formVisible && (
-            <div className="org-add-form" key={`form-${formMode}-${formOriginalId ?? "new"}`}>
-              <div className="org-add-form-title">
-                {formMode === "add" ? "Nowe stanowisko" : "Edycja stanowiska"}
-              </div>
-              <div className="org-rule-block" style={{ marginBottom: 14 }}>
-                <div
-                  className="org-edit-label"
-                  style={{ marginBottom: 6 }}
-                >
-                  Jak działa hierarchia
-                </div>
-                Hierarchia jest budowana automatycznie na podstawie{" "}
-                <span className="org-mono">parentId</span>. Jeśli ustawisz
-                przełożonego, węzeł pojawi się pod nim w drzewku.
-              </div>
-              <form onSubmit={savePosition}>
-                <div className="org-edit-grid">
-                  <div className="org-edit-field">
-                    <label className="org-edit-label">ID (unikalne)</label>
-                    <input
-                      type="text"
-                      className="org-edit-input"
-                      id="f-id"
-                      placeholder="np. kam_b2b"
-                      defaultValue={
-                        formMode === "edit" && formOriginalId
-                          ? getPosById(positions, formOriginalId)?.id
-                          : ""
-                      }
-                      disabled={formMode === "edit"}
-                    />
-                  </div>
-                  <div className="org-edit-field">
-                    <label className="org-edit-label">Nazwa stanowiska</label>
-                    <input
-                      type="text"
-                      className="org-edit-input"
-                      id="f-title"
-                      placeholder="np. Specjalista ds. jakości"
-                      defaultValue={
-                        formMode === "edit" && formOriginalId
-                          ? getPosById(positions, formOriginalId)?.title
-                          : ""
-                      }
-                    />
-                  </div>
-                  <div className="org-edit-field">
-                    <label className="org-edit-label">Dział</label>
-                    <input
-                      type="text"
-                      className="org-edit-input"
-                      id="f-dept"
-                      placeholder="np. Sprzedaż / Produkcja / Biuro"
-                      defaultValue={
-                        formMode === "edit" && formOriginalId
-                          ? getPosById(positions, formOriginalId)?.dept
-                          : ""
-                      }
-                    />
-                  </div>
-                  <div className="org-edit-field">
-                    <label className="org-edit-label">Poziom hierarchii</label>
-                    <select
-                      className="org-edit-input"
-                      id="f-level"
-                      defaultValue={
-                        formMode === "edit" && formOriginalId
-                          ? getPosById(positions, formOriginalId)?.level ?? 4
-                          : 4
-                      }
-                    >
-                      {[0, 1, 2, 3, 4, 5].map((l) => (
-                        <option key={l} value={l}>
-                          {l} —{" "}
-                          {["Zarząd", "Dyrekcja", "Kierownictwo", "Koordynatorzy", "Specjaliści", "Pracownicy wykonawczy"][l]}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="org-edit-field">
-                    <label className="org-edit-label">Przełożony (parentId)</label>
-                    <select
-                      className="org-edit-input"
-                      id="f-parent"
-                      defaultValue={
-                        formMode === "edit" && formOriginalId
-                          ? getPosById(positions, formOriginalId)?.parentId ?? ""
-                          : positions.some((p) => p.id === "ceo")
-                          ? "ceo"
-                          : ""
-                      }
-                    >
-                      <option value="">— brak (root) —</option>
-                      {positions
-                        .filter((p) => p.id !== (formMode === "edit" ? formOriginalId : null))
-                        .sort(
-                          (a, b) =>
-                            a.level - b.level ||
-                            (a.dept || "").localeCompare(b.dept || "", "pl") ||
-                            (a.title || "").localeCompare(b.title || "", "pl")
-                        )
-                        .map((p) => (
-                          <option key={p.id} value={p.id}>
-                            Lv.{p.level} · {p.dept || ""} · {p.title || ""}
-                          </option>
-                        ))}
-                    </select>
-                  </div>
-                  <div className="org-edit-field">
-                    <label className="org-edit-label">Typ rozliczenia</label>
-                    <select
-                      className="org-edit-input"
-                      id="f-type"
-                      defaultValue={
-                        formMode === "edit" && formOriginalId
-                          ? getPosById(positions, formOriginalId)?.type ?? "monthly"
-                          : "monthly"
-                      }
-                    >
-                      <option value="monthly">Miesięczny (etat)</option>
-                      <option value="hourly">Godzinowy</option>
-                      <option value="commission">Prowizyjny</option>
-                      <option value="mixed">Mieszany</option>
-                    </select>
-                  </div>
-                  <div className="org-edit-field">
-                    <label className="org-edit-label">Min brutto (zł)</label>
-                    <input
-                      type="number"
-                      className="org-edit-input"
-                      id="f-min"
-                      placeholder="3000"
-                      defaultValue={
-                        formMode === "edit" && formOriginalId
-                          ? getPosById(positions, formOriginalId)?.min ?? ""
-                          : ""
-                      }
-                    />
-                  </div>
-                  <div className="org-edit-field">
-                    <label className="org-edit-label">Max brutto (zł)</label>
-                    <input
-                      type="number"
-                      className="org-edit-input"
-                      id="f-max"
-                      placeholder="5000"
-                      defaultValue={
-                        formMode === "edit" && formOriginalId
-                          ? getPosById(positions, formOriginalId)?.max ?? ""
-                          : ""
-                      }
-                    />
-                  </div>
-                  <div className="org-edit-field">
-                    <label className="org-edit-label">Headcount</label>
-                    <input
-                      type="text"
-                      className="org-edit-input"
-                      id="f-headcount"
-                      placeholder="np. 1 / 2–4 / 20"
-                      defaultValue={
-                        formMode === "edit" && formOriginalId
-                          ? getPosById(positions, formOriginalId)?.headcount ?? "1"
-                          : "1"
-                      }
-                    />
-                  </div>
-                  <div className="org-edit-field full">
-                    <label className="org-edit-label">
-                      Zakres obowiązków (1 linia = 1 punkt)
-                    </label>
-                    <textarea
-                      className="org-edit-input"
-                      id="f-duties"
-                      rows={4}
-                      placeholder="..."
-                      defaultValue={
-                        formMode === "edit" && formOriginalId
-                          ? (getPosById(positions, formOriginalId)?.duties ?? []).join("\n")
-                          : ""
-                      }
-                    />
-                  </div>
-                  <div className="org-edit-field full">
-                    <label className="org-edit-label">Reguły wynagrodzenia</label>
-                    <textarea
-                      className="org-edit-input"
-                      id="f-rules"
-                      rows={3}
-                      placeholder="..."
-                      defaultValue={
-                        formMode === "edit" && formOriginalId
-                          ? getPosById(positions, formOriginalId)?.rules ?? ""
-                          : ""
-                      }
-                    />
-                  </div>
-                </div>
-                <div className="org-btn-row">
-                  <button
-                    type="submit"
-                    className="org-btn org-btn-primary"
-                    disabled={saving}
-                  >
-                    Zapisz
-                  </button>
-                  <button
-                    type="button"
-                    className="org-btn org-btn-secondary"
-                    onClick={cancelForm}
-                  >
-                    Anuluj
-                  </button>
-                  {formMode === "edit" && (
-                    <button
-                      type="button"
-                      className="org-btn org-btn-secondary"
-                      style={{ borderColor: "var(--red)", color: "var(--red)" }}
-                      onClick={deletePosition}
-                      disabled={saving}
-                    >
-                      Usuń
-                    </button>
-                  )}
-                </div>
-              </form>
-              {formError && (
-                <div
-                  className="org-rule-block"
-                  id="formError"
-                  style={{ borderLeftColor: "var(--red)" }}
-                >
-                  <strong>Błąd:</strong> {escapeHtml(formError)}
-                </div>
-              )}
-            </div>
-          )}
-
           <div className="org-search-bar">
             <input
               type="text"
@@ -954,8 +857,8 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
                   <th>Stanowisko</th>
                   <th>Dział</th>
                   <th>Poziom</th>
-                  <th>Parent</th>
-                  <th>Headcount</th>
+                  <th>Przełożony</th>
+                  <th>Liczba etatów</th>
                   <th>Widełki</th>
                   <th>Akcje</th>
                 </tr>
@@ -1002,7 +905,118 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
         </div>
       </main>
 
-      {/* Detail overlay */}
+      {/* Formularz stanowiska — popup */}
+      <div
+        className={`org-form-overlay ${formVisible ? "open" : ""}`}
+        onClick={(e) => e.target === e.currentTarget && cancelForm()}
+      >
+        {formVisible && (
+          <div className="org-form-panel" key={`form-${formMode}-${formOriginalId ?? "new"}`} onClick={(e) => e.stopPropagation()}>
+            <div className="org-form-panel-header">
+              <h2 className="org-form-panel-title">
+                {formMode === "add" ? "Nowe stanowisko" : "Edycja stanowiska"}
+              </h2>
+              <button type="button" className="org-detail-close" onClick={cancelForm}>×</button>
+            </div>
+            <div className="org-form-panel-body">
+              <div className="org-rule-block" style={{ marginBottom: 14 }}>
+                <div className="org-edit-label" style={{ marginBottom: 6 }}>Jak działa hierarchia</div>
+                Hierarchia jest budowana automatycznie na podstawie przełożonego (parentId). Jeśli ustawisz przełożonego, węzeł pojawi się pod nim w drzewku.
+              </div>
+              <form onSubmit={savePosition}>
+                <div className="org-edit-grid">
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">ID (unikalne)</label>
+                    <input type="text" className="org-edit-input" id="f-id" placeholder="np. kam_b2b"
+                      defaultValue={formMode === "edit" && formOriginalId ? getPosById(positions, formOriginalId)?.id : ""}
+                      disabled={formMode === "edit"} />
+                  </div>
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">Nazwa stanowiska</label>
+                    <input type="text" className="org-edit-input" id="f-title" placeholder="np. Specjalista ds. jakości"
+                      defaultValue={formMode === "edit" && formOriginalId ? getPosById(positions, formOriginalId)?.title : ""} />
+                  </div>
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">Dział</label>
+                    <input type="text" className="org-edit-input" id="f-dept" placeholder="np. Sprzedaż / Produkcja / Biuro"
+                      defaultValue={formMode === "edit" && formOriginalId ? getPosById(positions, formOriginalId)?.dept : ""} />
+                  </div>
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">Poziom hierarchii</label>
+                    <select className="org-edit-input" id="f-level"
+                      defaultValue={formMode === "edit" && formOriginalId ? getPosById(positions, formOriginalId)?.level ?? 4 : 4}>
+                      {[0, 1, 2, 3, 4, 5].map((l) => (
+                        <option key={l} value={l}>{l} — {["Zarząd", "Dyrekcja", "Kierownictwo", "Koordynatorzy", "Specjaliści", "Pracownicy wykonawczy"][l]}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">Przełożony (parentId)</label>
+                    <select className="org-edit-input" id="f-parent"
+                      defaultValue={formMode === "edit" && formOriginalId ? getPosById(positions, formOriginalId)?.parentId ?? "" : positions.some((p) => p.id === "ceo") ? "ceo" : ""}>
+                      <option value="">— brak (root) —</option>
+                      {positions.filter((p) => p.id !== (formMode === "edit" ? formOriginalId : null))
+                        .sort((a, b) => a.level - b.level || (a.dept || "").localeCompare(b.dept || "", "pl") || (a.title || "").localeCompare(b.title || "", "pl"))
+                        .map((p) => (
+                          <option key={p.id} value={p.id}>Lv.{p.level} · {p.dept || ""} · {p.title || ""}</option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">Typ rozliczenia</label>
+                    <select className="org-edit-input" id="f-type"
+                      defaultValue={formMode === "edit" && formOriginalId ? getPosById(positions, formOriginalId)?.type ?? "monthly" : "monthly"}>
+                      <option value="monthly">Miesięczny (etat)</option>
+                      <option value="hourly">Godzinowy</option>
+                      <option value="commission">Prowizyjny</option>
+                      <option value="mixed">Mieszany</option>
+                    </select>
+                  </div>
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">Min netto (zł)</label>
+                    <input type="number" className="org-edit-input" id="f-min" placeholder="3000"
+                      defaultValue={formMode === "edit" && formOriginalId ? getPosById(positions, formOriginalId)?.min ?? "" : ""} />
+                  </div>
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">Max netto (zł)</label>
+                    <input type="number" className="org-edit-input" id="f-max" placeholder="5000"
+                      defaultValue={formMode === "edit" && formOriginalId ? getPosById(positions, formOriginalId)?.max ?? "" : ""} />
+                  </div>
+                  <div className="org-edit-field">
+                    <label className="org-edit-label">Liczba etatów</label>
+                    <input type="text" className="org-edit-input" id="f-headcount" placeholder="np. 1 / 2–4 / 20"
+                      defaultValue={formMode === "edit" && formOriginalId ? getPosById(positions, formOriginalId)?.headcount ?? "1" : "1"} />
+                  </div>
+                  <div className="org-edit-field full">
+                    <label className="org-edit-label">Zakres obowiązków (1 linia = 1 punkt)</label>
+                    <textarea className="org-edit-input" id="f-duties" rows={4} placeholder="..."
+                      defaultValue={formMode === "edit" && formOriginalId ? (getPosById(positions, formOriginalId)?.duties ?? []).join("\n") : ""} />
+                  </div>
+                  <div className="org-edit-field full">
+                    <label className="org-edit-label">Reguły wynagrodzenia</label>
+                    <textarea className="org-edit-input" id="f-rules" rows={3} placeholder="..."
+                      defaultValue={formMode === "edit" && formOriginalId ? getPosById(positions, formOriginalId)?.rules ?? "" : ""} />
+                  </div>
+                </div>
+                <div className="org-btn-row">
+                  <button type="submit" className="org-btn org-btn-primary" disabled={saving}>Zapisz</button>
+                  <button type="button" className="org-btn org-btn-secondary" onClick={cancelForm}>Anuluj</button>
+                  {formMode === "edit" && (
+                    <button type="button" className="org-btn org-btn-secondary" style={{ borderColor: "var(--red)", color: "var(--red)" }} onClick={deletePosition} disabled={saving}>Usuń</button>
+                  )}
+                </div>
+              </form>
+              {formError && (
+                <div className="org-rule-block" id="formError" style={{ borderLeftColor: "var(--red)" }}>
+                  <strong>Błąd:</strong> {escapeHtml(formError)}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Szczegóły stanowiska — popup */}
       <div
         className={`org-detail-overlay ${detailId ? "open" : ""}`}
         onClick={(e) => e.target === e.currentTarget && closeDetail()}
@@ -1010,17 +1024,23 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
         {detailPos && (
           <div className="org-detail-panel" onClick={(e) => e.stopPropagation()}>
             <div className="org-detail-header">
-              <div className="org-detail-dept">
-                {detailPos.dept || "—"} · Lv.{detailPos.level}
+              <div>
+                <div className="org-detail-dept">
+                  {detailPos.dept || "—"} · Lv.{detailPos.level}
+                </div>
+                <div className="org-detail-title">{detailPos.title || "—"}</div>
               </div>
-              <div className="org-detail-title">{detailPos.title || "—"}</div>
-              <button
-                type="button"
-                className="org-detail-close"
-                onClick={closeDetail}
-              >
-                ×
-              </button>
+              <div className="org-detail-header-actions">
+                <button
+                  type="button"
+                  className="org-btn org-btn-gold"
+                  style={{ padding: "6px 12px", fontSize: 11 }}
+                  onClick={() => { openEditPosition(detailPos.id); closeDetail(); }}
+                >
+                  Edytuj
+                </button>
+                <button type="button" className="org-detail-close" onClick={closeDetail}>×</button>
+              </div>
             </div>
             <div className="org-detail-body">
               <div className="org-detail-section">
@@ -1057,7 +1077,7 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
                     <div className="org-salary-item-note">wyliczone ze stawek kosztów pracodawcy</div>
                   </div>
                   <div className="org-salary-item">
-                    <div className="org-salary-item-label">Headcount</div>
+                    <div className="org-salary-item-label">Liczba etatów</div>
                     <div className="org-salary-item-value">
                       {detailPos.headcount || "—"}
                     </div>
