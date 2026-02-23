@@ -12,6 +12,7 @@ import {
   validateHierarchy,
   buildTreeFromPositions,
   getSelfAndDescendantIds,
+  getEffectiveParentId,
 } from "@/lib/org-utils";
 import { netToGross } from "@/lib/salary-rates";
 import { useRouter } from "next/navigation";
@@ -119,6 +120,7 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], initia
   const [hierarchyEditMode, setHierarchyEditMode] = useState(false);
   const [hierarchyEditSelectedId, setHierarchyEditSelectedId] = useState(null);
   const [hierarchyEditMessage, setHierarchyEditMessage] = useState("");
+  const [hierarchyViewMode, setHierarchyViewMode] = useState("structure");
   const router = useRouter();
 
   const positions = safePositions;
@@ -152,9 +154,49 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], initia
 
   const depts = uniqueDepts(positions);
   const problems = validateHierarchy(positions);
-  const treeRoot = positions.length
-    ? buildTreeFromPositions(positions, getPos)
-    : null;
+
+  const positionIdsWithEmployees = useMemo(
+    () => new Set(activeEmployees.map((e) => e.positionId).filter(Boolean)),
+    [activeEmployees]
+  );
+
+  const positionsForEmploymentView = useMemo(() => {
+    if (positionIdsWithEmployees.size === 0) return [];
+    return Array.from(positionIdsWithEmployees)
+      .map((id) => {
+        const pos = getPosById(positions, id);
+        if (!pos) return null;
+        const effectiveParent = getEffectiveParentId(id, positionIdsWithEmployees, getPos);
+        return { ...pos, parentId: effectiveParent };
+      })
+      .filter(Boolean);
+  }, [positionIdsWithEmployees, positions]);
+
+  const treeRootStructure = useMemo(
+    () => (positions.length ? buildTreeFromPositions(positions, getPos) : null),
+    [positions, getPos]
+  );
+
+  const getPosEmployment = useCallback(
+    (id) => positionsForEmploymentView.find((p) => p.id === id) ?? null,
+    [positionsForEmploymentView]
+  );
+
+  const treeRootEmployment = useMemo(
+    () =>
+      positionsForEmploymentView.length
+        ? buildTreeFromPositions(positionsForEmploymentView, getPosEmployment)
+        : null,
+    [positionsForEmploymentView, getPosEmployment]
+  );
+
+  const hierarchyTreeRoot = hierarchyViewMode === "structure" ? treeRootStructure : treeRootEmployment;
+  const hierarchyPositionsForTree =
+    hierarchyViewMode === "structure" ? positions : positionsForEmploymentView;
+  const getPosForTree =
+    hierarchyViewMode === "structure"
+      ? getPos
+      : (id) => getPosById(positionsForEmploymentView, id);
 
   const fitHierarchyView = useCallback(() => {
     const vp = hierarchyViewportRef.current;
@@ -179,7 +221,7 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], initia
     if (activeTab !== "hierarchy") return;
     const t = setTimeout(() => fitHierarchyViewRef.current(), 150);
     return () => clearTimeout(t);
-  }, [activeTab]);
+  }, [activeTab, hierarchyViewMode, hierarchyTreeRoot]);
 
   const hierarchyZoomPanRef = useRef({ zoom: hierarchyZoom, pan: hierarchyPan });
   hierarchyZoomPanRef.current = { zoom: hierarchyZoom, pan: hierarchyPan };
@@ -691,7 +733,31 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], initia
             </div>
           </div>
 
-          <div className="org-legend">
+          <div className="org-legend" style={{ flexWrap: "wrap", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginRight: 16 }}>
+              <span style={{ fontSize: 11, color: "var(--ink3)", marginRight: 4 }}>Widok:</span>
+              <button
+                type="button"
+                className={`org-btn ${hierarchyViewMode === "structure" ? "org-btn-primary" : "org-btn-secondary"}`}
+                style={{ padding: "4px 10px", fontSize: 10 }}
+                onClick={() => setHierarchyViewMode("structure")}
+              >
+                Struktura (wzór)
+              </button>
+              <button
+                type="button"
+                className={`org-btn ${hierarchyViewMode === "employment" ? "org-btn-primary" : "org-btn-secondary"}`}
+                style={{ padding: "4px 10px", fontSize: 10 }}
+                onClick={() => setHierarchyViewMode("employment")}
+              >
+                Zatrudnieni
+              </button>
+              {hierarchyViewMode === "employment" && (
+                <span style={{ fontSize: 11, color: "var(--ink3)" }}>
+                  ({positionsForEmploymentView.length} stanowisk z osobami)
+                </span>
+              )}
+            </div>
             <div className="org-legend-item">
               <div className="org-legend-dot" style={{ background: "var(--lv0)" }} />
               Zarząd
@@ -814,16 +880,20 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], initia
               }}
             >
               <div className="org-tree-root">
-                {treeRoot && (
+                {hierarchyViewMode === "employment" && positionsForEmploymentView.length === 0 ? (
+                  <div style={{ padding: 48, textAlign: "center", color: "var(--ink3)", fontSize: 14 }}>
+                    Brak zatrudnionych osób. Widok „Zatrudnieni” pokaże stanowiska po dodaniu pracowników w zakładce Pracownicy lub w szczegółach stanowiska.
+                  </div>
+                ) : hierarchyTreeRoot ? (
                   <TreeLevel
-                    node={treeRoot}
-                    positions={positions}
+                    node={hierarchyTreeRoot}
+                    positions={hierarchyPositionsForTree}
                     onDetail={openDetail}
                     editMode={hierarchyEditMode}
                     selectedForEditId={hierarchyEditSelectedId}
                     onEditClick={handleHierarchyEditClick}
                   />
-                )}
+                ) : null}
               </div>
             </div>
             <p className="org-tree-hint">
