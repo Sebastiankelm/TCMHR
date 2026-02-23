@@ -158,9 +158,10 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
   hierarchyZoomPanRef.current = { zoom: hierarchyZoom, pan: hierarchyPan };
 
   const onHierarchyWheel = useCallback((e) => {
-    e.preventDefault();
     const vp = hierarchyViewportRef.current;
-    if (!vp) return;
+    if (!vp || !vp.contains(e.target)) return;
+    e.preventDefault();
+    e.stopPropagation();
     const delta = -Math.sign(e.deltaY) * 0.12;
     const vw = vp.clientWidth;
     const vh = vp.clientHeight;
@@ -176,10 +177,10 @@ export default function AppOrg({ initialPositions = [], initialRaci = [], dataEr
   }, []);
 
   useEffect(() => {
-    const vp = hierarchyViewportRef.current;
-    if (!vp || activeTab !== "hierarchy") return;
-    vp.addEventListener("wheel", onHierarchyWheel, { passive: false });
-    return () => vp.removeEventListener("wheel", onHierarchyWheel);
+    if (activeTab !== "hierarchy") return;
+    const handler = (e) => onHierarchyWheel(e);
+    document.addEventListener("wheel", handler, { passive: false, capture: true });
+    return () => document.removeEventListener("wheel", handler, { capture: true });
   }, [onHierarchyWheel, activeTab]);
 
   const onHierarchyPanStart = useCallback((e) => {
