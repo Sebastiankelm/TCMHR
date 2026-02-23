@@ -82,14 +82,17 @@ git push -u origin main
 
 ## Migracje bazy (Supabase)
 
-Aplikacja używa tabel: **positions** (stanowiska) i **raci_matrix** (matryca RACI).
+Aplikacja używa tabel: **positions** (stanowiska), **raci_matrix** (matryca RACI), **employees** (pracownicy z opisami).
 
 1. W **Supabase** → [SQL Editor](https://supabase.com/dashboard/project/obxoowqvqqhojdhqyoac/sql/new).
 2. Uruchom migracje w kolejności:
-   - `supabase/migrations/20250223000001_initial.sql` – tworzy tabele i RLS
-   - `supabase/migrations/20250223000002_seed.sql` – wstawia dane startowe (stanowiska + RACI)
+   - `20250223000001_initial.sql` – tabele positions, raci_matrix + RLS
+   - `20250223000002_seed.sql` – opcjonalnie: pierwszy seed (15 stanowisk, 4 RACI)
+   - `20250223000003_employees.sql` – tabela employees (pracownicy z opisami)
+   - `20250223000004_positions_raci_skalowanie.sql` – kolumny raci, skalowanie w positions
+   - `20250223000005_seed_full_from_html.sql` – **uzupełnienie bazy**: 28 stanowisk (z obowiązkami, regułami, RACI per stanowisko, skalowaniem) + 20 wierszy matrycy RACI
 
-Albo skopiuj zawartość obu plików do jednego zapytania i wykonaj. Po migracji strona będzie korzystać z danych z Supabase.
+Jeśli uruchamiasz od zera, możesz pominąć `002` i od razu po `004` uruchomić `005` – wtedy baza ma od razu pełne dane (28 stanowisk, 20 RACI).
 
 ## Struktura
 

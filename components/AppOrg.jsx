@@ -12,6 +12,7 @@ import {
   validateHierarchy,
   buildTreeFromPositions,
 } from "@/lib/org-utils";
+import { netToGross } from "@/lib/salary-rates";
 import {
   savePosition as savePositionAction,
   deletePosition as deletePositionAction,
@@ -46,7 +47,10 @@ function TreeLevel({ node, positions, onNodeClick, onDetail }) {
             {escapeHtml(pos.headcount || "—")} os.
           </div>
           <div className="org-node-salary">
-            {formatRange(pos.min, pos.max)}
+            <div>netto: {formatRange(pos.min, pos.max)}</div>
+            <div style={{ fontSize: 11, opacity: 0.9 }}>
+              brutto: {formatRange(netToGross(pos.min), netToGross(pos.max))}
+            </div>
           </div>
         </div>
       </div>
@@ -73,6 +77,8 @@ function TreeLevel({ node, positions, onNodeClick, onDetail }) {
 }
 
 export default function AppOrg({ initialPositions = [], initialRaci = [] }) {
+  const safePositions = Array.isArray(initialPositions) ? initialPositions : [];
+  const safeRaci = Array.isArray(initialRaci) ? initialRaci : [];
   const [activeTab, setActiveTab] = useState("hierarchy");
   const [detailId, setDetailId] = useState(null);
   const [formVisible, setFormVisible] = useState(false);
@@ -80,18 +86,25 @@ export default function AppOrg({ initialPositions = [], initialRaci = [] }) {
   const [formOriginalId, setFormOriginalId] = useState(null);
   const [formError, setFormError] = useState("");
   const [raciEditMode, setRaciEditMode] = useState(false);
-  const [raciRows, setRaciRows] = useState(initialRaci);
+  const [raciRows, setRaciRows] = useState(safeRaci);
   const [salaryDeptFilter, setSalaryDeptFilter] = useState("");
   const [salarySearch, setSalarySearch] = useState("");
   const [posDeptFilter, setPosDeptFilter] = useState("");
   const [posSearch, setPosSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  const [clock, setClock] = useState("");
 
-  const positions = initialPositions;
+  const positions = safePositions;
 
   useEffect(() => {
-    setRaciRows(initialRaci);
-  }, [initialRaci]);
+    setClock(new Date().toLocaleString("pl-PL"));
+    const id = setInterval(() => setClock(new Date().toLocaleString("pl-PL")), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    setRaciRows(safeRaci);
+  }, [safeRaci]);
 
   const getPos = useCallback(
     (id) => getPosById(positions, id),
@@ -108,15 +121,17 @@ export default function AppOrg({ initialPositions = [], initialRaci = [] }) {
     (acc, p) => acc + headcountToNumber(p.headcount),
     0
   );
-  let fundMin = 0,
-    fundMax = 0;
+  let fundMinNet = 0,
+    fundMaxNet = 0;
   positions.forEach((p) => {
     const h = headcountToNumber(p.headcount);
     const mi = Number(p.min);
     const ma = Number(p.max);
-    if (Number.isFinite(mi)) fundMin += mi * h;
-    if (Number.isFinite(ma)) fundMax += ma * h;
+    if (Number.isFinite(mi)) fundMinNet += mi * h;
+    if (Number.isFinite(ma)) fundMaxNet += ma * h;
   });
+  const fundMinGross = netToGross(fundMinNet);
+  const fundMaxGross = netToGross(fundMaxNet);
   const levels =
     Math.max(...positions.map((p) => Number(p.level) || 0), 0) + 1;
 
@@ -313,8 +328,9 @@ export default function AppOrg({ initialPositions = [], initialRaci = [] }) {
           <div
             className="org-mono"
             style={{ fontSize: 10, color: "var(--gold-light)" }}
+            suppressHydrationWarning
           >
-            {new Date().toLocaleString("pl-PL")}
+            {clock}
           </div>
           <button
             type="button"
@@ -358,13 +374,22 @@ export default function AppOrg({ initialPositions = [], initialRaci = [] }) {
               <div className="org-stat-sub">suma headcount</div>
             </div>
             <div className="org-stat-card">
-              <div className="org-stat-label">Fundusz płac</div>
+              <div className="org-stat-label">Fundusz płac (netto)</div>
               <div className="org-stat-value" style={{ fontSize: 20 }}>
-                {fundMin || fundMax
-                  ? `${Math.round(fundMin / 1000)}k–${Math.round(fundMax / 1000)}k`
+                {fundMinNet || fundMaxNet
+                  ? `${Math.round(fundMinNet / 1000)}k–${Math.round(fundMaxNet / 1000)}k`
                   : "—"}
               </div>
               <div className="org-stat-sub">min–max (szacunek)</div>
+            </div>
+            <div className="org-stat-card">
+              <div className="org-stat-label">Fundusz płac (brutto)</div>
+              <div className="org-stat-value" style={{ fontSize: 20 }}>
+                {fundMinGross != null && fundMaxGross != null
+                  ? `${Math.round(fundMinGross / 1000)}k–${Math.round(fundMaxGross / 1000)}k`
+                  : "—"}
+              </div>
+              <div className="org-stat-sub">z netto (stawki kosztów pracodawcy)</div>
             </div>
             <div className="org-stat-card">
               <div className="org-stat-label">Stanowiska</div>
@@ -472,6 +497,8 @@ export default function AppOrg({ initialPositions = [], initialRaci = [] }) {
                   <th>Dział</th>
                   <th>Poziom</th>
                   <th>Typ</th>
+                  <th>Min netto</th>
+                  <th>Max netto</th>
                   <th>Min brutto</th>
                   <th>Max brutto</th>
                   <th>Headcount</th>
@@ -491,6 +518,8 @@ export default function AppOrg({ initialPositions = [], initialRaci = [] }) {
                     <td>{typeLabel(p.type)}</td>
                     <td>{formatMoney(p.min)}</td>
                     <td>{formatMoney(p.max)}</td>
+                    <td>{formatMoney(netToGross(p.min))}</td>
+                    <td>{formatMoney(netToGross(p.max))}</td>
                     <td>{escapeHtml(p.headcount || "—")}</td>
                   </tr>
                 ))}
@@ -546,7 +575,7 @@ export default function AppOrg({ initialPositions = [], initialRaci = [] }) {
                 </tr>
               </thead>
               <tbody>
-                {raciRows.map((row, idx) => (
+                {(raciRows ?? []).map((row, idx) => (
                   <tr key={row.id ?? idx}>
                     <td style={{ fontSize: 12.5, minWidth: 260 }}>
                       {raciEditMode ? (
@@ -918,7 +947,12 @@ export default function AppOrg({ initialPositions = [], initialRaci = [] }) {
                       <td className="org-mono">Lv.{p.level}</td>
                       <td>{escapeHtml(parentTitle)}</td>
                       <td>{escapeHtml(p.headcount || "—")}</td>
-                      <td>{formatRange(p.min, p.max)}</td>
+                      <td>
+                        <div>{formatRange(p.min, p.max)}</div>
+                        <div style={{ fontSize: 11, color: "var(--ink3)" }}>
+                          brutto: {formatRange(netToGross(p.min), netToGross(p.max))}
+                        </div>
+                      </td>
                       <td>
                         <button
                           type="button"
@@ -980,11 +1014,17 @@ export default function AppOrg({ initialPositions = [], initialRaci = [] }) {
                     </div>
                   </div>
                   <div className="org-salary-item">
-                    <div className="org-salary-item-label">Widełki</div>
+                    <div className="org-salary-item-label">Widełki (netto)</div>
                     <div className="org-salary-item-value">
                       {formatRange(detailPos.min, detailPos.max)}
                     </div>
-                    <div className="org-salary-item-note">min–max brutto</div>
+                  </div>
+                  <div className="org-salary-item">
+                    <div className="org-salary-item-label">Widełki (brutto)</div>
+                    <div className="org-salary-item-value">
+                      {formatRange(netToGross(detailPos.min), netToGross(detailPos.max))}
+                    </div>
+                    <div className="org-salary-item-note">wyliczone ze stawek kosztów pracodawcy</div>
                   </div>
                   <div className="org-salary-item">
                     <div className="org-salary-item-label">Headcount</div>
@@ -1012,6 +1052,47 @@ export default function AppOrg({ initialPositions = [], initialRaci = [] }) {
                   {escapeHtml(detailPos.rules || "Brak.")}
                 </div>
               </div>
+              {detailPos.skalowanie && (
+                <div className="org-detail-section">
+                  <div className="org-detail-section-title">Skalowanie stanowiska</div>
+                  <div className="org-rule-block">{escapeHtml(detailPos.skalowanie)}</div>
+                </div>
+              )}
+              {detailPos.raci && Object.keys(detailPos.raci).length > 0 && (
+                <div className="org-detail-section">
+                  <div className="org-detail-section-title">Odpowiedzialność RACI</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                    {Object.entries(detailPos.raci).map(([role, val]) => {
+                      const v = String(val).charAt(0);
+                      const bg =
+                        v === "R"
+                          ? { background: "#DCFCE7", color: "#166534" }
+                          : v === "A"
+                          ? { background: "#FEE2E2", color: "#7F1D1D" }
+                          : v === "C"
+                          ? { background: "#FEF3C7", color: "#92400E" }
+                          : v === "I"
+                          ? { background: "#F1F5F9", color: "#334155" }
+                          : {};
+                      return (
+                        <span
+                          key={role}
+                          className="org-mono"
+                          style={{
+                            padding: "2px 8px",
+                            borderRadius: 2,
+                            fontSize: 11,
+                            fontWeight: 500,
+                            ...bg,
+                          }}
+                        >
+                          {role}: {val}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
