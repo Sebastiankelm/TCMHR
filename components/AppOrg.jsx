@@ -76,7 +76,7 @@ function TreeLevel({ node, positions, onNodeClick, onDetail }) {
   );
 }
 
-export default function AppOrg({ initialPositions = [], initialRaci = [] }) {
+export default function AppOrg({ initialPositions = [], initialRaci = [], dataError = null }) {
   const safePositions = Array.isArray(initialPositions) ? initialPositions : [];
   const safeRaci = Array.isArray(initialRaci) ? initialRaci : [];
   const [activeTab, setActiveTab] = useState("hierarchy");
@@ -342,6 +342,36 @@ export default function AppOrg({ initialPositions = [], initialRaci = [] }) {
           </button>
         </div>
       </header>
+
+      {(dataError || (safePositions.length === 0 && !dataError)) && (
+        <div
+          role="alert"
+          className="org-data-alert"
+          style={{
+            margin: "12px 16px",
+            padding: "12px 16px",
+            borderRadius: 8,
+            background: dataError ? "rgba(220, 60, 60, 0.15)" : "rgba(255, 180, 0, 0.15)",
+            border: `1px solid ${dataError ? "rgba(220,60,60,0.5)" : "rgba(255,180,0,0.5)"}`,
+            color: "var(--ink)",
+            fontSize: 13,
+          }}
+        >
+          {dataError ? (
+            <>
+              <strong>Błąd połączenia z bazą:</strong> {dataError}
+              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.9 }}>
+                Sprawdź zmienne <code>NEXT_PUBLIC_SUPABASE_URL</code> i <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> (lokalnie: <code>.env.local</code>; na Vercel: ustawienia projektu).
+              </div>
+            </>
+          ) : (
+            <>
+              Brak stanowisk w bazie. Uruchom migracje w Supabase (SQL Editor), np.{" "}
+              <code>20250223000005_seed_full_from_html.sql</code>.
+            </>
+          )}
+        </div>
+      )}
 
       <nav className="org-tab-bar">
         {[
